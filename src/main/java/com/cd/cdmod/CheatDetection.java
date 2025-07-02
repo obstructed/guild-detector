@@ -18,8 +18,11 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
+import java.util.Arrays; // Added to fix compilation error
 import java.util.regex.Pattern;
 
 import com.google.gson.Gson;
@@ -35,6 +38,7 @@ public class CheatDetection {
     public void init(FMLInitializationEvent event) {
         MinecraftForge.EVENT_BUS.register(new ChatScraper());
         ClientCommandHandler.instance.registerCommand(new SetApiKeyClientCommand());
+        ClientCommandHandler.instance.registerCommand(new BlacklistCommand());
     }
 
     public static class ChatScraper {
@@ -83,12 +87,13 @@ public class CheatDetection {
 
                         String guildName = fetchGuildName(apiKey, uuid);
                         if (guildName == null) {
-                            sendChat("[CheaterDetector]: " + finalOpponentName + " is not in a guild.");
-                        } else {
-                            sendChat("[CheaterDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
+                            return; // No message if no guild
+                        }
+                        Set<String> blacklistedGuilds = loadBlacklist();
+                        if (blacklistedGuilds.contains(guildName)) {
+                            sendChat(EnumChatFormatting.AQUA + "[CheaterDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
                         }
                     } catch (Exception e) {
-                        e.printStackTrace();
                         sendChat("[CheaterDetector]: Failed to check guild for " + finalOpponentName);
                     }
                 }).start();
@@ -111,10 +116,24 @@ public class CheatDetection {
                 scanner.close();
                 return key;
             } catch (IOException e) {
-                e.printStackTrace();
                 sendChat(EnumChatFormatting.RED + "Failed to read API key.");
                 return null;
             }
+        }
+
+        private Set<String> loadBlacklist() {
+            Set<String> blacklistedGuilds = new HashSet<>();
+            File file = new File(Minecraft.getMinecraft().mcDataDir, "cheaterdetection/blacklist.txt");
+            if (file.exists()) {
+                try (Scanner scanner = new Scanner(file)) {
+                    while (scanner.hasNextLine()) {
+                        blacklistedGuilds.add(scanner.nextLine().trim());
+                    }
+                } catch (IOException e) {
+                    sendChat(EnumChatFormatting.RED + "Failed to read blacklist.");
+                }
+            }
+            return blacklistedGuilds;
         }
 
         private String fetchUUID(String ign) {
@@ -168,9 +187,9 @@ public class CheatDetection {
                     }
                     String uuid = json.get("id").getAsString();
                     uuidCache.put(ign, uuid);
+                   
                     return uuid;
                 } catch (Exception e) {
-                    e.printStackTrace();
                     sendChat("[CheaterDetector] Error fetching UUID for " + ign + " (Attempt " + attempt + "): " + e.getClass().getSimpleName() + " - " + e.getMessage());
                     if (attempt < maxRetries) {
                         try {
@@ -194,13 +213,6 @@ public class CheatDetection {
 
                 int responseCode = conn.getResponseCode();
                 if (responseCode != 200) {
-                    System.out.println("[CheaterDetector] API request failed. Code: " + responseCode);
-                    BufferedReader errReader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
-                    StringBuilder error = new StringBuilder();
-                    String line;
-                    while ((line = errReader.readLine()) != null) error.append(line);
-                    errReader.close();
-                    System.out.println("[CheaterDetector] Error response: " + error.toString());
                     return null;
                 }
 
@@ -216,7 +228,6 @@ public class CheatDetection {
 
                 return json.get("guild").getAsJsonObject().get("name").getAsString();
             } catch (Exception e) {
-                e.printStackTrace();
                 return null;
             }
         }
@@ -252,10 +263,108 @@ public class CheatDetection {
                 writer.write(args[0]);
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "API key saved successfully."));
             } catch (IOException e) {
-                e.printStackTrace();
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Failed to save API key."));
             } finally {
                 if (writer != null) try { writer.close(); } catch (IOException ignored) {}
+            }
+        }
+
+        @Override
+        public int getRequiredPermissionLevel() {
+            return 0;
+        }
+    }
+
+    public static class BlacklistCommand extends CommandBase {
+        @Override
+        public String getCommandName() {
+            return "blacklist";
+        }
+
+        @Override
+        public String getCommandUsage(ICommandSender sender) {
+            return "/blacklist <add/remove/list/clear> [guild]";
+        }
+
+        @Override
+        public void processCommand(ICommandSender sender, String[] args) {
+            if (args.length < 1) {
+                sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Usage: /blacklist <add/remove/list/clear> [guild]"));
+                return;
+            }
+
+            File dir = new File(Minecraft.getMinecraft().mcDataDir, "cheaterdetection");
+            if (!dir.exists()) dir.mkdirs();
+            File file = new File(dir, "blacklist.txt");
+
+            Set<String> blacklistedGuilds = new HashSet<>();
+            if (file.exists()) {
+                try (Scanner scanner = new Scanner(file)) {
+                    while (scanner.hasNextLine()) {
+                        blacklistedGuilds.add(scanner.nextLine().trim());
+                    }
+                } catch (IOException e) {
+                    sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Failed to read blacklist."));
+                    return;
+                }
+            }
+
+            String action = args[0].toLowerCase();
+            switch (action) {
+                case "add":
+                    if (args.length < 2) {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Usage: /blacklist add <guild>"));
+                        return;
+                    }
+                    String guildToAdd = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
+                    if (blacklistedGuilds.add(guildToAdd)) {
+                        saveBlacklist(blacklistedGuilds, file);
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Added " + guildToAdd + " to blacklist."));
+                    } else {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToAdd + " is already blacklisted."));
+                    }
+                    break;
+                case "remove":
+                    if (args.length < 2) {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Usage: /blacklist remove <guild>"));
+                        return;
+                    }
+                    String guildToRemove = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
+                    if (blacklistedGuilds.remove(guildToRemove)) {
+                        saveBlacklist(blacklistedGuilds, file);
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Removed " + guildToRemove + " from blacklist."));
+                    } else {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToRemove + " is not blacklisted."));
+                    }
+                    break;
+                case "list":
+                    if (blacklistedGuilds.isEmpty()) {
+                        sender.addChatMessage(new ChatComponentText("Blacklist is empty."));
+                    } else {
+                        sender.addChatMessage(new ChatComponentText("Blacklisted guilds: " + String.join(", ", blacklistedGuilds)));
+                    }
+                    break;
+                case "clear":
+                    if (!blacklistedGuilds.isEmpty()) {
+                        blacklistedGuilds.clear();
+                        saveBlacklist(blacklistedGuilds, file);
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Blacklist cleared."));
+                    } else {
+                        sender.addChatMessage(new ChatComponentText("Blacklist is already empty."));
+                    }
+                    break;
+                default:
+                    sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Usage: /blacklist <add/remove/list/clear> [guild]"));
+            }
+        }
+
+        private void saveBlacklist(Set<String> blacklistedGuilds, File file) {
+            try (FileWriter writer = new FileWriter(file)) {
+                for (String guild : blacklistedGuilds) {
+                    writer.write(guild + "\n");
+                }
+            } catch (IOException e) {
+                
             }
         }
 
