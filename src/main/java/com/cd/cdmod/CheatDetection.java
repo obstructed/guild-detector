@@ -22,7 +22,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.Arrays; // Added to fix compilation error
+import java.util.Arrays;
 import java.util.regex.Pattern;
 
 import com.google.gson.Gson;
@@ -64,7 +64,7 @@ public class CheatDetection {
                     opponentName = remaining;
                 }
 
-                // Strip Minecraft formatting and non-name characters
+                
                 opponentName = opponentName.replaceAll("§[0-9a-fk-or]", "");
                 opponentName = opponentName.replaceAll("[^a-zA-Z0-9_]", "");
 
@@ -74,7 +74,7 @@ public class CheatDetection {
 
                 new Thread(() -> {
                     try {
-                        Thread.sleep(1000); // Delay to avoid spam
+                        Thread.sleep(750); 
 
                         String apiKey = loadApiKey();
                         if (apiKey == null) return;
@@ -87,10 +87,10 @@ public class CheatDetection {
 
                         String guildName = fetchGuildName(apiKey, uuid);
                         if (guildName == null) {
-                            return; // No message if no guild
+                            return; 
                         }
                         Set<String> blacklistedGuilds = loadBlacklist();
-                        if (blacklistedGuilds.contains(guildName)) {
+                        if (blacklistedGuilds.stream().anyMatch(bg -> bg.toLowerCase().equals(guildName.toLowerCase()))) {
                             sendChat(EnumChatFormatting.AQUA + "[CheaterDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
                         }
                     } catch (Exception e) {
@@ -187,7 +187,6 @@ public class CheatDetection {
                     }
                     String uuid = json.get("id").getAsString();
                     uuidCache.put(ign, uuid);
-                   
                     return uuid;
                 } catch (Exception e) {
                     sendChat("[CheaterDetector] Error fetching UUID for " + ign + " (Attempt " + attempt + "): " + e.getClass().getSimpleName() + " - " + e.getMessage());
@@ -317,11 +316,13 @@ public class CheatDetection {
                         return;
                     }
                     String guildToAdd = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
-                    if (blacklistedGuilds.add(guildToAdd)) {
+                    String guildToAddLower = guildToAdd.toLowerCase();
+                    if (blacklistedGuilds.stream().anyMatch(bg -> bg.toLowerCase().equals(guildToAddLower))) {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToAdd + " is already blacklisted (case-insensitive)."));
+                    } else {
+                        blacklistedGuilds.add(guildToAdd);
                         saveBlacklist(blacklistedGuilds, file);
                         sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Added " + guildToAdd + " to blacklist."));
-                    } else {
-                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToAdd + " is already blacklisted."));
                     }
                     break;
                 case "remove":
@@ -330,7 +331,15 @@ public class CheatDetection {
                         return;
                     }
                     String guildToRemove = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
-                    if (blacklistedGuilds.remove(guildToRemove)) {
+                    String guildToRemoveLower = guildToRemove.toLowerCase();
+                    boolean removed = false;
+                    for (String bg : new HashSet<>(blacklistedGuilds)) {
+                        if (bg.toLowerCase().equals(guildToRemoveLower)) {
+                            blacklistedGuilds.remove(bg);
+                            removed = true;
+                        }
+                    }
+                    if (removed) {
                         saveBlacklist(blacklistedGuilds, file);
                         sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Removed " + guildToRemove + " from blacklist."));
                     } else {
