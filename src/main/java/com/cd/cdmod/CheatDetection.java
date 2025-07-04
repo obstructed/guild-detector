@@ -79,9 +79,10 @@ public class CheatDetection {
                             sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
                             return;
                         }
+
                         if (!isOnline) {
-                            sendChat(EnumChatFormatting.RED + "[PlayerDetector] Possible nick found! " + finalOpponentName + " (Player is offline)");
-                            return;
+                            sendChat(EnumChatFormatting.YELLOW + "[PlayerDetector] Possible nick found! " + finalOpponentName + " (Player is offline)");
+                        
                         }
 
                         String guildName = fetchGuildName(apiKey, uuid);
@@ -91,6 +92,7 @@ public class CheatDetection {
                         if (blacklistedGuilds.stream().anyMatch(bg -> bg.equalsIgnoreCase(guildName))) {
                             sendChat(EnumChatFormatting.AQUA + "[PlayerDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
                         }
+
                     } catch (Exception e) {
                         sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
                     }
