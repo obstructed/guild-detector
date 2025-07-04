@@ -1,15 +1,15 @@
 [
   {
-    "modid": "cheaterdetector",
-    "name": "Cheater Detector",
-    "description": "Simple cheat detection example mod.",
+    "modid": "playerdetector",
+    "name": "Player Detector",
+    "description": "player detection mod for duels.",
     "version": "1.0",
     "mcversion": "1.8.9",
     "url": "",
     "updateUrl": "",
     "authorList": ["@obstructed on GitHub"],
     "credits": "Made with Forge",
-    "logoFile": "",
+    "logoFile": "logo.jpg",
     "screenshots": [],
     "dependencies": []
   }

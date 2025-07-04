@@ -6,14 +6,12 @@ import net.minecraftforge.fml.common.Mod.EventHandler;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.client.ClientCommandHandler;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.ICommandSender;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.EnumChatFormatting;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -22,16 +20,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.Arrays;
 import java.util.regex.Pattern;
-
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
 @Mod(modid = CheatDetection.MODID, name = CheatDetection.NAME, version = CheatDetection.VERSION, clientSideOnly = true)
 public class CheatDetection {
-    public static final String MODID = "cheaterdetector";
-    public static final String NAME = "Cheater Detector";
+    public static final String MODID = "playerdetector";
+    public static final String NAME = "Player Detector";
     public static final String VERSION = "1.0";
 
     @EventHandler
@@ -51,7 +47,6 @@ public class CheatDetection {
             if (message.contains(marker)) {
                 int start = message.indexOf(marker) + marker.length();
                 String remaining = message.substring(start).trim();
-
                 String opponentName;
                 if (remaining.startsWith("[")) {
                     int bracketEnd = remaining.indexOf("] ");
@@ -63,38 +58,41 @@ public class CheatDetection {
                 } else {
                     opponentName = remaining;
                 }
-
-                
                 opponentName = opponentName.replaceAll("§[0-9a-fk-or]", "");
                 opponentName = opponentName.replaceAll("[^a-zA-Z0-9_]", "");
-
                 final String finalOpponentName = opponentName;
-
-                System.out.println("[CheaterDetector] Found opponent: " + finalOpponentName);
-
+                System.out.println("[PlayerDetector] Found opponent: " + finalOpponentName);
                 new Thread(() -> {
                     try {
-                        Thread.sleep(750); 
-
+                        Thread.sleep(750);
                         String apiKey = loadApiKey();
                         if (apiKey == null) return;
 
                         String uuid = fetchUUID(finalOpponentName);
                         if (uuid == null) {
-                            sendChat("[CheaterDetector]: Could not find UUID for " + finalOpponentName);
+                            sendChat(EnumChatFormatting.RED + "[PlayerDetector] Nick found! " + finalOpponentName + " (UUID not found)");
+                            return;
+                        }
+
+                        Boolean isOnline = checkPlayerOnline(apiKey, uuid);
+                        if (isOnline == null) {
+                            sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
+                            return;
+                        }
+                        if (!isOnline) {
+                            sendChat(EnumChatFormatting.RED + "[PlayerDetector] Possible nick found! " + finalOpponentName + " (Player is offline)");
                             return;
                         }
 
                         String guildName = fetchGuildName(apiKey, uuid);
-                        if (guildName == null) {
-                            return; 
-                        }
+                        if (guildName == null) return;
+
                         Set<String> blacklistedGuilds = loadBlacklist();
-                        if (blacklistedGuilds.stream().anyMatch(bg -> bg.toLowerCase().equals(guildName.toLowerCase()))) {
-                            sendChat(EnumChatFormatting.AQUA + "[CheaterDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
+                        if (blacklistedGuilds.stream().anyMatch(bg -> bg.equalsIgnoreCase(guildName))) {
+                            sendChat(EnumChatFormatting.AQUA + "[PlayerDetector]: " + finalOpponentName + " is in the guild " + guildName + "!");
                         }
                     } catch (Exception e) {
-                        sendChat("[CheaterDetector]: Failed to check guild for " + finalOpponentName);
+                        sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
                     }
                 }).start();
             }
@@ -111,10 +109,9 @@ public class CheatDetection {
                     sendChat(EnumChatFormatting.RED + "API key not set. Use /setapikey");
                     return null;
                 }
-                Scanner scanner = new Scanner(file);
-                String key = scanner.nextLine().trim();
-                scanner.close();
-                return key;
+                try (Scanner scanner = new Scanner(file)) {
+                    return scanner.nextLine().trim();
+                }
             } catch (IOException e) {
                 sendChat(EnumChatFormatting.RED + "Failed to read API key.");
                 return null;
@@ -136,97 +133,80 @@ public class CheatDetection {
             return blacklistedGuilds;
         }
 
-        private String fetchUUID(String ign) {
-            if (uuidCache.containsKey(ign)) {
-                return uuidCache.get(ign);
-            }
-
-            int maxRetries = 3;
-            for (int attempt = 1; attempt <= maxRetries; attempt++) {
-                try {
-                    URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + ign);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestProperty("User-Agent", "CheaterDetectorMod/1.0");
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(5000);
-
-                    int responseCode = conn.getResponseCode();
-                    if (responseCode != 200) {
-                        sendChat("[CheaterDetector] Failed to fetch UUID for " + ign + ". HTTP Code: " + responseCode);
-                        if (attempt < maxRetries) {
-                            sendChat("[CheaterDetector] Retrying (" + attempt + "/" + maxRetries + ")...");
-                            Thread.sleep(2000 * attempt);
-                            continue;
-                        }
-                        return null;
-                    }
-
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    StringBuilder response = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        response.append(line);
-                    }
-                    reader.close();
-
-                    String responseStr = response.toString();
-                    if (responseStr.isEmpty()) {
-                        sendChat("[CheaterDetector] Empty response from Mojang API for " + ign + " (Attempt " + attempt + ")");
-                        if (attempt < maxRetries) {
-                            Thread.sleep(2000 * attempt);
-                            continue;
-                        }
-                        return null;
-                    }
-
-                    Gson gson = new Gson();
-                    JsonObject json = gson.fromJson(responseStr, JsonObject.class);
-                    if (!json.has("id")) {
-                        sendChat("[CheaterDetector] No UUID found in response for " + ign + ". Response: " + responseStr);
-                        return null;
-                    }
-                    String uuid = json.get("id").getAsString();
-                    uuidCache.put(ign, uuid);
-                    return uuid;
-                } catch (Exception e) {
-                    sendChat("[CheaterDetector] Error fetching UUID for " + ign + " (Attempt " + attempt + "): " + e.getClass().getSimpleName() + " - " + e.getMessage());
-                    if (attempt < maxRetries) {
-                        try {
-                            Thread.sleep(2000 * attempt);
-                        } catch (InterruptedException ignored) {}
-                        continue;
-                    }
-                    return null;
-                }
-            }
-            return null;
-        }
-
-        private String fetchGuildName(String apiKey, String player) {
+        private Boolean checkPlayerOnline(String apiKey, String uuid) {
             try {
-                String urlStr = "https://api.hypixel.net/v2/guild?player=" + player;
+                String urlStr = "https://api.hypixel.net/v2/status?uuid=" + uuid;
                 HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
                 conn.setRequestMethod("GET");
                 conn.setRequestProperty("API-Key", apiKey);
-                conn.setRequestProperty("User-Agent", "CheaterDetectorMod/1.0");
-
+                conn.setRequestProperty("User-Agent", "PlayerDetectorMod/1.0");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
                 int responseCode = conn.getResponseCode();
-                if (responseCode != 200) {
-                    return null;
-                }
-
+                if (responseCode != 200) return null;
                 BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                 StringBuilder response = new StringBuilder();
                 String line;
                 while ((line = in.readLine()) != null) response.append(line);
                 in.close();
+                JsonObject json = new Gson().fromJson(response.toString(), JsonObject.class);
+                if (!json.get("success").getAsBoolean()) return null;
+                JsonObject status = json.getAsJsonObject("session");
+                return status.get("online").getAsBoolean();
+            } catch (Exception e) {
+                return null;
+            }
+        }
 
-                Gson gson = new Gson();
-                JsonObject json = gson.fromJson(response.toString(), JsonObject.class);
+        private String fetchUUID(String ign) {
+            if (uuidCache.containsKey(ign)) {
+                return uuidCache.get(ign);
+            }
+            try {
+                URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + ign);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestProperty("User-Agent", "PlayerDetectorMod/1.0");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                if (conn.getResponseCode() != 200) return null;
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) response.append(line);
+                reader.close();
+                JsonObject json = new Gson().fromJson(response.toString(), JsonObject.class);
+                if (!json.has("id")) return null;
+                String uuid = json.get("id").getAsString();
+                uuidCache.put(ign, uuid);
+                return uuid;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        private String fetchGuildName(String apiKey, String uuid) {
+            try {
+                String urlStr = "https://api.hypixel.net/v2/guild?player=" + uuid;
+                HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("API-Key", apiKey);
+                conn.setRequestProperty("User-Agent", "PlayerDetectorMod/1.0");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                if (conn.getResponseCode() != 200) {
+                    sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
+                    return null;
+                }
+                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = in.readLine()) != null) response.append(line);
+                in.close();
+                JsonObject json = new Gson().fromJson(response.toString(), JsonObject.class);
                 if (!json.get("success").getAsBoolean() || json.get("guild").isJsonNull()) return null;
-
                 return json.get("guild").getAsJsonObject().get("name").getAsString();
             } catch (Exception e) {
+                sendChat(EnumChatFormatting.RED + "[CheatDetector] Couldn't reach the Hypixel network, your API key might have expired.");
                 return null;
             }
         }
@@ -251,20 +231,14 @@ public class CheatDetection {
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Invalid API key. Must be UUID format."));
                 return;
             }
-
             File dir = new File(Minecraft.getMinecraft().mcDataDir, "cheaterdetection");
             if (!dir.exists()) dir.mkdirs();
-
             File file = new File(dir, "apikey.txt");
-            FileWriter writer = null;
-            try {
-                writer = new FileWriter(file);
+            try (FileWriter writer = new FileWriter(file)) {
                 writer.write(args[0]);
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "API key saved successfully."));
             } catch (IOException e) {
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Failed to save API key."));
-            } finally {
-                if (writer != null) try { writer.close(); } catch (IOException ignored) {}
             }
         }
 
@@ -291,23 +265,18 @@ public class CheatDetection {
                 sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Usage: /blacklist <add/remove/list/clear> [guild]"));
                 return;
             }
-
             File dir = new File(Minecraft.getMinecraft().mcDataDir, "cheaterdetection");
             if (!dir.exists()) dir.mkdirs();
             File file = new File(dir, "blacklist.txt");
-
             Set<String> blacklistedGuilds = new HashSet<>();
             if (file.exists()) {
                 try (Scanner scanner = new Scanner(file)) {
-                    while (scanner.hasNextLine()) {
-                        blacklistedGuilds.add(scanner.nextLine().trim());
-                    }
+                    while (scanner.hasNextLine()) blacklistedGuilds.add(scanner.nextLine().trim());
                 } catch (IOException e) {
                     sender.addChatMessage(new ChatComponentText(EnumChatFormatting.RED + "Failed to read blacklist."));
                     return;
                 }
             }
-
             String action = args[0].toLowerCase();
             switch (action) {
                 case "add":
@@ -316,9 +285,8 @@ public class CheatDetection {
                         return;
                     }
                     String guildToAdd = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
-                    String guildToAddLower = guildToAdd.toLowerCase();
-                    if (blacklistedGuilds.stream().anyMatch(bg -> bg.toLowerCase().equals(guildToAddLower))) {
-                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToAdd + " is already blacklisted (case-insensitive)."));
+                    if (blacklistedGuilds.stream().anyMatch(bg -> bg.equalsIgnoreCase(guildToAdd))) {
+                        sender.addChatMessage(new ChatComponentText(EnumChatFormatting.YELLOW + guildToAdd + " is already blacklisted."));
                     } else {
                         blacklistedGuilds.add(guildToAdd);
                         saveBlacklist(blacklistedGuilds, file);
@@ -331,14 +299,7 @@ public class CheatDetection {
                         return;
                     }
                     String guildToRemove = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
-                    String guildToRemoveLower = guildToRemove.toLowerCase();
-                    boolean removed = false;
-                    for (String bg : new HashSet<>(blacklistedGuilds)) {
-                        if (bg.toLowerCase().equals(guildToRemoveLower)) {
-                            blacklistedGuilds.remove(bg);
-                            removed = true;
-                        }
-                    }
+                    boolean removed = blacklistedGuilds.removeIf(bg -> bg.equalsIgnoreCase(guildToRemove));
                     if (removed) {
                         saveBlacklist(blacklistedGuilds, file);
                         sender.addChatMessage(new ChatComponentText(EnumChatFormatting.GREEN + "Removed " + guildToRemove + " from blacklist."));
@@ -372,9 +333,7 @@ public class CheatDetection {
                 for (String guild : blacklistedGuilds) {
                     writer.write(guild + "\n");
                 }
-            } catch (IOException e) {
-                
-            }
+            } catch (IOException ignored) {}
         }
 
         @Override
